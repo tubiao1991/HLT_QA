@@ -1,0 +1,180 @@
+#! /usr/bin/perl -w
+
+use Time::localtime;
+use File::stat;
+use FileHandle;
+use Cwd;
+
+my @files;
+my @runnumbers;
+my @rundays;
+
+sub parseFileName;
+sub parseDirName;
+sub parseRunNumber;
+
+# current dir
+$dir = cwd;
+
+print $dir,"\n";
+
+# read in configurations
+open (configFile, "< $dir/hltMonitor.config") or die "can't open config file \n";
+
+while (<configFile>)
+{
+    chomp;                          # no newline
+    s/#.*//;                        # no comments
+    s/^\s+//;                       # no leading white
+    s/\s+$//;                       # no trailing white
+    next unless length;             # anything left?
+    my ($var, $value) = split (/\s*:\s*/, $_,2);
+    $ConfigMap{$var} = $value;
+}
+
+close(configFile);
+
+my $logFile         = $ConfigMap{"logFile"};
+my $runRootFile     = $ConfigMap{"runRootFile"};
+my $plotsPath       = $ConfigMap{"plotsPath"};
+my $plotsPathURL    = $ConfigMap{"plotsPathURL"};
+my $commentFileName = $ConfigMap{"commentFileName"};
+my $sleepHours      = $ConfigMap{"sleepHours"};
+my $htmlFileName    = $ConfigMap{"htmlFileName"};
+
+open (theLogFile, ">>".$logFile);
+theLogFile->autoflush(1);
+
+print "finished reading config file \n";
+print theLogFile "finished reading config file \n";
+
+%tmp = (); # temporary day : runnumber. Have duplicated entries
+
+%day_runnumber = (); # day : runnumber, no duplicated runnumbers.
+%comments = ();
+
+open (commentFile, "$commentFileName") || print theLogFile "Could not open comment file ! \n";
+while (<commentFile>)
+{
+    chomp;                          # no newline
+    s/#.*//;                        # no comments
+    s/^\s+//;                       # no leading white
+    s/\s+$//;                       # no trailing white
+    next unless length;             # anything left?
+    my ($whateverKey,$tmpComments) = split (/\s*:\s*/, $_,2);
+    $whateverKey =~ s/^\s+//;
+    $whateverKey =~ s/\s+$//;
+    push (@{$comments{$whateverKey}},$tmpComments);
+}
+close(commentFile);
+
+%tmp = (); # temporary day : runnumber. Have duplicated entries
+%day_runnumber = (); # day : runnumber, no duplicated runnumbers.
+
+# now let's make a html page.
+#my @totalRunsProcessed = <$plotsPath/*/*/*.pdf>;
+my @totalRunsProcessed = <$runRootFile/*.root>;
+my @totalDaysProcessed = <$plotsPath/*/run17_hlt_day???_current_hist.pdf>;
+
+for(@totalRunsProcessed)
+{
+    my ($day, $runnumber) = parseFileName($_);
+    push (@{$tmp{$day}},$runnumber);
+}
+
+foreach $day (keys %tmp)
+{
+    undef %saw;
+    @uniqRunnumbers = grep(!$saw{$_}++, @{$tmp{$day}}); # get rid of duplicates
+    push(@{$day_runnumber{$day}}, $_) for @uniqRunnumbers;
+    print $day, "\n";
+}
+
+my $hostName = `hostname`;
+@hostnameparts = split(/\./,$hostName); 
+print 
+my $userName = `whoami`;
+
+if (-e $htmlFileName) {`rm -rf $htmlFileName`;}
+open (monitorPage, ">"."$htmlFileName");
+print monitorPage "<HTML> \n";
+print monitorPage "<HEAD> \n";
+print monitorPage "<TITLE>HLT Online Monitoring</TITLE> \n";
+print monitorPage "</HEAD> \n";
+print monitorPage "<BODY> \n";
+print monitorPage "<H1>HLT Online Monitoring</H1> \n";
+print monitorPage "<I>This page will be updated every $sleepHours hours, the last update was on ".ctime()." </I><BR> \n";
+
+print monitorPage "<TABLE border=\"0\"> \n";
+# print monitorPage "<TR> <TD align=\"right\"> Total processed files : </TD> <TD align=\"left\"> ".scalar(@totalFilesProcessed)." </TD> <TR> \n";
+print monitorPage "<TR> <TD align=\"left\"> Runs : </TD> <TD align=\"left\"> <b>".scalar(@totalRunsProcessed)."</b> </TD><TD align=\"left\"> Days : </TD> <TD align=\"left\"> <b>".scalar(@totalDaysProcessed)."</b> </TD> <TR> \n";
+print monitorPage "<TR> <TD align=\"left\"> Host : </TD> <TD align=\"left\"> <b>$hostnameparts[0] </b></TD><TD align=\"left\"> User : </TD> <TD align=\"left\"> <b>$userName </b></TD> <TR> \n";
+#print monitorPage "<TR> <TD align=\"left\"> Day Root File : </TD> <TD align=\"left\"> <b>$rootFile  </b></TD><TD align=\"right\"> Plots : </TD> <TD align=\"left\"> <b>$plotsPath </b></TD> <TR> \n";
+print monitorPage "</TABLE> <BR/> \n";
+print monitorPage "<BR/> \n";
+print monitorPage "<TABLE border=\"1\"> \n";
+print monitorPage "<TR> <TD align=\"left\">Day/Run</TD> <TD align=\"center\">QA Plots</TD>  <TD align=\"center\">QA rootfiles</TD> <TD align=\"left\">QA Produced time</TD>  <TD align=\"left\">Comments</TD> </TR> \n";
+
+# day/run, plots, QA produced time, comments
+
+my $allfilenameNoPath = "run17_hlt_all_current_hist";
+if(-e "$plotsPath\/$allfilenameNoPath.pdf")
+{
+    my $thisComment="";
+    $thisComment .=$_ for @{$comments{"all"}};
+    chomp($thisComment);
+    $tmpTime = -e "$plotsPath\/$allfilenameNoPath.pdf" ? ctime(stat("$plotsPath\/$allfilenameNoPath.pdf")->mtime) : "";
+    print monitorPage "<TR bgcolor=\"#00CCFF\"> <TD align=\"left\">All data of 510GeV</TD> <TD align=\"center\"><A href=\"http://$plotsPathURL\/run17_hlt_all_current_hist.pdf\">pdf</A></TD> <TD align=\"center\"><A href=\"http://online.star.bnl.gov/HLT2017/JsRootDev/index.htm?file=..\/run17_hlt_all_current_hist.root\">root</A></TD> <TD align=\"left\"> $tmpTime </TD>  <TD align=\"left\">510GeV&nbsp;</TD> </TR> \n";
+}
+
+foreach $day (reverse sort keys %day_runnumber)
+{
+    my $dayfilenameNoPath = "run17_hlt_day".$day."_current_hist";
+    my $dayComment="";
+    $dayComment .=$_ for @{$comments{"day$day"}};
+    chomp($dayComment);
+    if(-e "$plotsPath\/$day\/$dayfilenameNoPath.pdf")
+    {
+	$tmpTime = -e "$plotsPath\/$day\/$dayfilenameNoPath.pdf" ? ctime(stat("$plotsPath\/$day\/$dayfilenameNoPath.pdf")->mtime) : "";
+	print monitorPage "<TR bgcolor=\"#FF8040\"> <TD align=\"left\">day  $day</TD> <TD align=\"center\"><A href=\"http://$plotsPathURL\/$day\/run17_hlt_day".$day."_current_hist.pdf\">pdf</A></TD> <TD align=\"center\"><A href=\"http://online.star.bnl.gov/HLT2017/JsRootDev/index.htm?file=..\/$day\/run17_hlt_day".$day."_current_hist.root\">root</A></TD> <TD align=\"left\"> $tmpTime </TD> <TD align=\"left\">$dayComment&nbsp;</TD> </TR> \n";
+    }
+    foreach $runnumber (reverse sort @{$day_runnumber{$day}})
+    {
+	print "make line ",$day," ",$runnumber,"\n";
+	my $filenameNoPath = "run17_hlt_".$runnumber."_current_hist";
+	my $thisComment="";
+	$thisComment .=$_ for @{$comments{"$runnumber"}};
+	chomp($thisComment);
+	print monitorPage "<TR bgcolor=\"#99FF66\"> <TD align=\"left\">run <A href=\"http://online.star.bnl.gov/RunLog/index.php?r=$runnumber\">$runnumber</A></TD> <TD align=\"center\"><A href=\"http://$plotsPathURL\/runbyrunplots\/run_".$runnumber.".pdf\">pdf</A></TD> <TD align=\"center\"><A href=\"http://online.star.bnl.gov/HLT2017/JsRootDev/index.htm?file=..\/runbyrunplots\/run_".$runnumber.".root\">root</A></TD> <TD align=\"left\">  </TD>  <TD align=\"left\">$thisComment&nbsp;</TD> </TR> \n";
+    }
+}
+
+print monitorPage "</TABLE> \n";
+print monitorPage "</HTML> \n";
+
+close monitorPage;
+
+print theLogFile "finished updating $htmlFileName \n";
+
+close theLogFile;
+
+####################################
+########## subroutines #############
+####################################
+
+sub parseFileName ()
+{ # get the day, as well as filename without path
+    my $filename=shift;
+# my @temp1 = split (/gl3_/,$filename); # MN use sed instead of split
+# my @temp1 = split (/hlt_/,$filename); # MN use sed instead of split
+# my @temp2 = split (/\//,$filename); # MN use sed instead of split
+    my $temp1 = `echo $filename | sed 's%^.*run_%%' | sed 's%\([0-9]*\).*%\1%'`;
+    my $temp2 =	`echo $filename | sed 's%^.*/%%'`;
+    $temp2 =~ s/\.daq//; # now no postfix left in filename.
+    chomp $temp2;
+    return (substr($temp1,2,3), substr($temp1,0,8)); # day, runnumber, filenameNoPath
+# return (substr($temp1[1],2,3), substr($temp1[1],0,8), $temp2[-1]); # day, runnumber, filenameNoPath # MN use sed instead of split
+}
+
+exit;
+
